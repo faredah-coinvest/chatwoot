@@ -1,7 +1,7 @@
 name: Sync GHSA advisories to Linear
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
