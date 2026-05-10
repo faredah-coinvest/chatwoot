@@ -1,10 +1,8 @@
-# Build production Chatwoot image and push to AWS ECR (linux/amd64).
+# Build Chatwoot image and push to AWS ECR (linux/amd64).
 #
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   AWS_ROLE_TO_ASSUME — IAM role ARN with OIDC trust for this repo
-#   AWS_REGION — e.g. us-east-1
-#   ECR_REGISTRY — e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com
-#   ECR_REPOSITORY — e.g. prod-chatwoot
+# Branch mapping:
+# - develop -> ECR_REPOSITORY
+# - stg     -> ECR_REPOSITORY-stg
 
 name: Publish to AWS ECR
 
@@ -12,6 +10,7 @@ on:
   push:
     branches:
       - develop
+      - stg
   workflow_dispatch:
 
 concurrency:
@@ -33,6 +32,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve target ECR repository
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "stg" ]; then
+            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY}-stg" >> "$GITHUB_ENV"
+          else
+            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY}" >> "$GITHUB_ENV"
+          fi
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,7 +47,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
@@ -57,7 +63,7 @@ jobs:
             RAILS_ENV=production
             BUNDLE_WITHOUT=development:test
           tags: |
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ env.ECR_REGISTRY }}/${{ env.TARGET_ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.TARGET_ECR_REPOSITORY }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

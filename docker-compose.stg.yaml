@@ -1,0 +1,93 @@
+name: chatwoot-stg
+
+services:
+  base: &base
+    image: ${CHATWOOT_IMAGE:?set CHATWOOT_IMAGE in .env.stg}
+    env_file: .env.stg
+
+  traefik:
+    image: traefik:v3.6
+    container_name: chatwoot-stg-traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - '80:80'
+      - '443:443'
+    env_file:
+      - .env.stg
+    command:
+      - '--log.level=INFO'
+      - '--api.dashboard=false'
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.websecure.address=:443'
+      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
+      - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
+      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env.stg}'
+      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - edge
+
+  rails:
+    <<: *base
+    container_name: chatwoot-stg-rails
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 's', '-p', '3000', '-b', '0.0.0.0']
+    restart: unless-stopped
+    networks:
+      - edge
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=chatwoot-stg_edge'
+      - 'traefik.http.routers.chatwoot-stg.rule=Host(`${FRONTEND_HOST}`)'
+      - 'traefik.http.routers.chatwoot-stg.entrypoints=websecure'
+      - 'traefik.http.routers.chatwoot-stg.tls=true'
+      - 'traefik.http.routers.chatwoot-stg.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.chatwoot-stg.loadbalancer.server.port=3000'
+
+  sidekiq:
+    <<: *base
+    container_name: chatwoot-stg-sidekiq
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    restart: unless-stopped
+    networks:
+      - edge
+
+  redis:
+    image: redis:alpine
+    container_name: chatwoot-stg-redis
+    restart: unless-stopped
+    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
+    env_file: .env.stg
+    volumes:
+      - redis_data:/data
+    networks:
+      - edge
+
+networks:
+  edge:
+
+volumes:
+  letsencrypt:
+  redis_data:
