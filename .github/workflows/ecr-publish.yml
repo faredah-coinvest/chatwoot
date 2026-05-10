@@ -1,8 +1,8 @@
 # Build Chatwoot image and push to AWS ECR (linux/amd64).
 #
 # Branch mapping:
-# - develop -> ECR_REPOSITORY
-# - stg     -> ECR_REPOSITORY-stg
+# - develop -> ECR_REPOSITORY (example: prod-chatwoot)
+# - stg     -> stg-chatwoot (derived from ECR_REPOSITORY by replacing prod- with stg-)
 
 name: Publish to AWS ECR
 
@@ -35,7 +35,7 @@ jobs:
       - name: Resolve target ECR repository
         run: |
           if [ "${GITHUB_REF_NAME}" = "stg" ]; then
-            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY}-stg" >> "$GITHUB_ENV"
+            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY/prod-/stg-}" >> "$GITHUB_ENV"
           else
             echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY}" >> "$GITHUB_ENV"
           fi
