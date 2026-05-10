@@ -2,7 +2,7 @@ name: chatwoot-stg
 
 services:
   base: &base
-    image: ${CHATWOOT_IMAGE:?set CHATWOOT_IMAGE in .env.stg}
+    image: ${CHATWOOT_IMAGE:-001910935947.dkr.ecr.us-east-1.amazonaws.com/stg-chatwoot:latest}
     env_file: .env.stg
 
   traefik:
@@ -78,7 +78,7 @@ services:
     image: redis:alpine
     container_name: chatwoot-stg-redis
     restart: unless-stopped
-    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "redis-server --requirepass \"${REDIS_PASSWORD:-stg-redis-password}\""]
     env_file: .env.stg
     volumes:
       - redis_data:/data
