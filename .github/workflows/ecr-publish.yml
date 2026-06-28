@@ -1,7 +1,6 @@
 # Build Chatwoot image and push to AWS ECR (linux/amd64).
 #
 # Branch mapping:
-# - main    -> ECR_REPOSITORY (example: prod-chatwoot)
 # - develop -> ECR_REPOSITORY (example: prod-chatwoot)
 # - stg     -> stg-chatwoot (derived from ECR_REPOSITORY by replacing prod- with stg-)
 
@@ -10,7 +9,6 @@ name: Publish to AWS ECR
 on:
   push:
     branches:
-      - main
       - develop
       - stg
   workflow_dispatch:
@@ -116,7 +114,7 @@ jobs:
             echo "Deployment complete."
 
       - name: Deploy production on EC2
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'develop'
         uses: appleboy/ssh-action@master
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
@@ -145,9 +143,9 @@ jobs:
             fi
 
             echo "Pulling latest code..."
-            git fetch origin main
-            git checkout main
-            git pull --ff-only origin main
+            git fetch origin develop
+            git checkout develop
+            git pull --ff-only origin develop
 
             if command -v aws >/dev/null 2>&1; then
               echo "Refreshing ECR login..."
