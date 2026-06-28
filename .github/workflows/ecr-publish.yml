@@ -67,3 +67,48 @@ jobs:
             ${{ env.ECR_REGISTRY }}/${{ env.TARGET_ECR_REPOSITORY }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Deploy staging on EC2
+        if: github.ref_name == 'stg'
+        uses: appleboy/ssh-action@master
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+        with:
+          host: ${{ secrets.STG_SERVER_IP }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.STG_SSH_PRIVATE_KEY }}
+          envs: AWS_REGION,ECR_REGISTRY
+          script: |
+            set -euo pipefail
+
+            cd ~/chatwoot
+
+            echo "Checking available disk space..."
+            FREE_SPACE=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//')
+            echo "Free space available: ${FREE_SPACE} GB"
+
+            if [ "$FREE_SPACE" -lt 5 ]; then
+              echo "Low disk space (<5GB). Running Docker cleanup..."
+              docker container prune -af
+              docker image prune -af
+              docker builder prune -af
+            else
+              echo "Enough disk space. Skipping Docker cleanup."
+            fi
+
+            echo "Pulling latest code..."
+            git fetch origin stg
+            git checkout stg
+            git pull --ff-only origin stg
+
+            if command -v aws >/dev/null 2>&1; then
+              echo "Refreshing ECR login..."
+              aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            fi
+
+            echo "Deploying Chatwoot..."
+            chmod +x script/deploy_chatwoot_compose.sh
+            script/deploy_chatwoot_compose.sh --stg
+
+            echo "Deployment complete."
