@@ -1,6 +1,7 @@
 # Build Chatwoot image and push to AWS ECR (linux/amd64).
 #
 # Branch mapping:
+# - main    -> ECR_REPOSITORY (example: prod-chatwoot)
 # - develop -> ECR_REPOSITORY (example: prod-chatwoot)
 # - stg     -> stg-chatwoot (derived from ECR_REPOSITORY by replacing prod- with stg-)
 
@@ -9,6 +10,7 @@ name: Publish to AWS ECR
 on:
   push:
     branches:
+      - main
       - develop
       - stg
   workflow_dispatch:
@@ -110,5 +112,50 @@ jobs:
             echo "Deploying Chatwoot..."
             chmod +x script/deploy_chatwoot_compose.sh
             script/deploy_chatwoot_compose.sh --stg
+
+            echo "Deployment complete."
+
+      - name: Deploy production on EC2
+        if: github.ref_name == 'main'
+        uses: appleboy/ssh-action@master
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          envs: AWS_REGION,ECR_REGISTRY
+          script: |
+            set -euo pipefail
+
+            cd ~/chatwoot
+
+            echo "Checking available disk space..."
+            FREE_SPACE=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//')
+            echo "Free space available: ${FREE_SPACE} GB"
+
+            if [ "$FREE_SPACE" -lt 5 ]; then
+              echo "Low disk space (<5GB). Running Docker cleanup..."
+              docker container prune -af
+              docker image prune -af
+              docker builder prune -af
+            else
+              echo "Enough disk space. Skipping Docker cleanup."
+            fi
+
+            echo "Pulling latest code..."
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            if command -v aws >/dev/null 2>&1; then
+              echo "Refreshing ECR login..."
+              aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            fi
+
+            echo "Deploying Chatwoot..."
+            chmod +x script/deploy_chatwoot_compose.sh
+            script/deploy_chatwoot_compose.sh
 
             echo "Deployment complete."
