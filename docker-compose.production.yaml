@@ -1,63 +1,116 @@
-version: '3'
+# Production: Traefik (HTTPS + Let's Encrypt) + Chatwoot. Database is external (RDS).
+#
+# DNS: point ${FRONTEND_HOST} (A/AAAA) at this host. Open ports 80 and 443.
+# Ensure the EC2 security group allows Rails/Sidekiq containers to reach RDS on 5432.
+#
+# Variables are read from `.env` in this directory (Compose loads it for substitution
+# and passes the same file into containers via env_file).
+#
+# .env should include at least:
+#   CHATWOOT_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>
+#   FRONTEND_HOST=your.public.hostname
+#   LETSENCRYPT_EMAIL=you@example.com
+#   POSTGRES_* or DATABASE_URL for RDS
+#   REDIS_PASSWORD=... and REDIS_URL=redis://:password@redis:6379
+#   SECRET_KEY_BASE=...
+#   (S3, SMTP, and any other Chatwoot secrets — see .env.example)
+
+name: chatwoot-prod
 
 services:
   base: &base
-    image: chatwoot/chatwoot:latest
-    env_file: .env ## Change this file for customized env variables
+    # Prebuilt image from ECR (or any registry). Required — set CHATWOOT_IMAGE in .env (see .env.example).
+    image: ${CHATWOOT_IMAGE:?set CHATWOOT_IMAGE in .env e.g. <account>.dkr.ecr.<region>.amazonaws.com/<repo>:latest}
+    env_file: .env
+
+  traefik:
+    # v3.6+ required for Docker Engine 27+ (API negotiation; v3.4 errors with
+    # "client version 1.24 is too old")
+    image: traefik:v3.6
+    container_name: chatwoot-traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - '80:80'
+      - '443:443'
+    env_file:
+      - .env
+    command:
+      - '--log.level=INFO'
+      - '--api.dashboard=false'
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.websecure.address=:443'
+      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
+      - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
+      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}'
+      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
     volumes:
-      - storage_data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - edge
 
   rails:
     <<: *base
+    container_name: chatwoot-rails
     depends_on:
-      - postgres
       - redis
-    ports:
-      - '127.0.0.1:3000:3000'
     environment:
       - NODE_ENV=production
       - RAILS_ENV=production
       - INSTALLATION_ENV=docker
     entrypoint: docker/entrypoints/rails.sh
     command: ['bundle', 'exec', 'rails', 's', '-p', '3000', '-b', '0.0.0.0']
-    restart: always
+    restart: unless-stopped
+    networks:
+      - edge
+      - traefik-public
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=chatwoot-prod_edge'
+      - 'traefik.http.routers.chatwoot.rule=Host(`${FRONTEND_HOST}`)'
+      - 'traefik.http.routers.chatwoot.entrypoints=websecure'
+      - 'traefik.http.routers.chatwoot.tls=true'
+      - 'traefik.http.routers.chatwoot.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.chatwoot.loadbalancer.server.port=3000'
 
   sidekiq:
     <<: *base
+    container_name: chatwoot-sidekiq
     depends_on:
-      - postgres
       - redis
     environment:
       - NODE_ENV=production
       - RAILS_ENV=production
       - INSTALLATION_ENV=docker
     command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
-    restart: always
-
-  postgres:
-    image: pgvector/pgvector:pg16
-    restart: always
-    ports:
-      - '127.0.0.1:5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=chatwoot
-      - POSTGRES_USER=postgres
-      # Please provide your own password.
-      - POSTGRES_PASSWORD=
+    restart: unless-stopped
+    networks:
+      - edge
 
   redis:
     image: redis:alpine
-    restart: always
+    container_name: chatwoot-redis
+    restart: unless-stopped
     command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
     env_file: .env
     volumes:
       - redis_data:/data
-    ports:
-      - '127.0.0.1:6379:6379'
+    networks:
+      - edge
+
+networks:
+  edge:
+  traefik-public:
+    external: true
 
 volumes:
-  storage_data:
-  postgres_data:
+  letsencrypt:
   redis_data:

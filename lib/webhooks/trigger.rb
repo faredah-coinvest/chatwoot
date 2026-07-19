@@ -48,7 +48,7 @@ class Webhooks::Trigger
       open_timeout: webhook_timeout,
       read_timeout: webhook_timeout,
       validate_content_type: false
-    ) { |_response| nil }
+    ) { |response| handle_success(response) }
   end
 
   def request_headers(body)
@@ -99,6 +99,30 @@ class Webhooks::Trigger
 
   def update_message_status(error)
     Messages::StatusUpdateService.new(message, 'failed', error.message).perform
+  end
+
+  def handle_success(response)
+    return unless @webhook_type == :api_inbox_webhook
+    return unless message
+
+    source_id = response_source_id(response)
+    return if source_id.blank?
+
+    message.update!(source_id: source_id)
+  rescue JSON::ParserError => e
+    Rails.logger.warn "Exception: Invalid webhook response body from #{@url} : #{e.message}"
+  end
+
+  def response_source_id(response)
+    response_body = response&.tempfile&.read.to_s
+    return if response_body.blank?
+
+    parsed_body = JSON.parse(response_body)
+    return unless parsed_body.is_a?(Hash)
+
+    parsed_body['source_id'].presence
+  ensure
+    response&.tempfile&.rewind if response&.tempfile&.respond_to?(:rewind)
   end
 
   def message

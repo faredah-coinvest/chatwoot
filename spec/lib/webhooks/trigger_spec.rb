@@ -46,6 +46,39 @@ describe Webhooks::Trigger do
       trigger.execute(url, payload, webhook_type)
     end
 
+    it 'stores source_id from api inbox webhook response body when present' do
+      payload = { event: 'message_created', conversation: { id: conversation.id }, id: message.id }
+      response_body = StringIO.new({ source_id: 'waapi-msg-123' }.to_json)
+      fetch_result = SafeFetch::Result.new(tempfile: response_body, filename: 'response.json', content_type: 'application/json')
+
+      expect(SafeFetch).to receive(:fetch).and_yield(fetch_result)
+
+      expect { trigger.execute(url, payload, webhook_type) }
+        .to change { message.reload.source_id }.from(nil).to('waapi-msg-123')
+    end
+
+    it 'ignores api inbox webhook response when source_id is missing' do
+      payload = { event: 'message_created', conversation: { id: conversation.id }, id: message.id }
+      response_body = StringIO.new({ ok: true }.to_json)
+      fetch_result = SafeFetch::Result.new(tempfile: response_body, filename: 'response.json', content_type: 'application/json')
+
+      expect(SafeFetch).to receive(:fetch).and_yield(fetch_result)
+
+      expect { trigger.execute(url, payload, webhook_type) }
+        .not_to(change { message.reload.source_id })
+    end
+
+    it 'ignores invalid api inbox webhook response json' do
+      payload = { event: 'message_created', conversation: { id: conversation.id }, id: message.id }
+      response_body = StringIO.new('{not-json')
+      fetch_result = SafeFetch::Result.new(tempfile: response_body, filename: 'response.json', content_type: 'application/json')
+
+      expect(SafeFetch).to receive(:fetch).and_yield(fetch_result)
+
+      expect { trigger.execute(url, payload, webhook_type) }
+        .not_to(change { message.reload.source_id })
+    end
+
     it 'updates message status if webhook fails for message-created event' do
       payload = { event: 'message_created', conversation: { id: conversation.id }, id: message.id }
 
