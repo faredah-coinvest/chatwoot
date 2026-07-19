@@ -90,7 +90,7 @@ jobs:
 
             if [ "$FREE_SPACE" -lt 5 ]; then
               echo "Low disk space (<5GB). Running Docker cleanup..."
-              docker container prune -af
+              docker container prune -f
               docker image prune -af
               docker builder prune -af
             else
@@ -135,7 +135,7 @@ jobs:
 
             if [ "$FREE_SPACE" -lt 5 ]; then
               echo "Low disk space (<5GB). Running Docker cleanup..."
-              docker container prune -af
+              docker container prune -f
               docker image prune -af
               docker builder prune -af
             else
