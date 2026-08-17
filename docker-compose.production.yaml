@@ -95,6 +95,15 @@ services:
     networks:
       - edge
 
+  newt:
+    image: fosrl/newt:1.15.0
+    container_name: chatwoot-newt
+    restart: unless-stopped
+    env_file:
+      - newt.env
+    networks:
+      - edge
+
   redis:
     image: redis:alpine
     container_name: chatwoot-redis
