@@ -73,13 +73,9 @@ services:
       - edge
       - traefik-public
     labels:
-      - 'traefik.enable=true'
-      - 'traefik.docker.network=chatwoot-prod_edge'
-      - 'traefik.http.routers.chatwoot.rule=Host(`${FRONTEND_HOST}`)'
-      - 'traefik.http.routers.chatwoot.entrypoints=websecure'
-      - 'traefik.http.routers.chatwoot.tls=true'
-      - 'traefik.http.routers.chatwoot.tls.certresolver=letsencrypt'
-      - 'traefik.http.services.chatwoot.loadbalancer.server.port=3000'
+      # Reachable only through the Newt tunnel, where Pangolin gates it. Traefik keeps
+      # serving the other hosts on this machine; it just no longer answers for this one.
+      - 'traefik.enable=false'
 
   sidekiq:
     <<: *base
@@ -92,6 +88,15 @@ services:
       - INSTALLATION_ENV=docker
     command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
     restart: unless-stopped
+    networks:
+      - edge
+
+  newt:
+    image: fosrl/newt:1.15.0
+    container_name: chatwoot-newt
+    restart: unless-stopped
+    env_file:
+      - newt.env
     networks:
       - edge
 
