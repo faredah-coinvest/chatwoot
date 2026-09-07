@@ -25,9 +25,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
-      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      AWS_REGION: ${{ github.ref_name == 'develop' && 'us-east-1' || secrets.AWS_REGION }}
+      ECR_REGISTRY: ${{ github.ref_name == 'develop' && '612947471739.dkr.ecr.us-east-1.amazonaws.com' || secrets.ECR_REGISTRY }}
+      ECR_REPOSITORY: ${{ github.ref_name == 'develop' && 'prod-chatwoot' || secrets.ECR_REPOSITORY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ github.ref_name == 'develop' && 'arn:aws:iam::612947471739:role/github-actions-chatwoot-prod' || secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -120,8 +120,8 @@ jobs:
           AWS_REGION: ${{ env.AWS_REGION }}
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
         with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.SSH_USERNAME }}
+          host: ${{ github.ref_name == 'develop' && '98.90.169.140' || secrets.PROD_SERVER_IP }}
+          username: ${{ github.ref_name == 'develop' && 'ubuntu' || secrets.SSH_USERNAME }}
           key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
           envs: AWS_REGION,ECR_REGISTRY
           script: |
