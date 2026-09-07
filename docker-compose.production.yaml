@@ -1,7 +1,6 @@
-# Production: Traefik (HTTPS + Let's Encrypt) + Chatwoot. Database is external (RDS).
+# Production: Traefik (HTTPS + Let's Encrypt) + Chatwoot with local PostgreSQL.
 #
 # DNS: point ${FRONTEND_HOST} (A/AAAA) at this host. Open ports 80 and 443.
-# Ensure the EC2 security group allows Rails/Sidekiq containers to reach RDS on 5432.
 #
 # Variables are read from `.env` in this directory (Compose loads it for substitution
 # and passes the same file into containers via env_file).
@@ -10,7 +9,7 @@
 #   CHATWOOT_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>
 #   FRONTEND_HOST=your.public.hostname
 #   LETSENCRYPT_EMAIL=you@example.com
-#   POSTGRES_* or DATABASE_URL for RDS
+#   POSTGRES_* for the local PostgreSQL container
 #   REDIS_PASSWORD=... and REDIS_URL=redis://:password@redis:6379
 #   SECRET_KEY_BASE=...
 #   (S3, SMTP, and any other Chatwoot secrets — see .env.example)
@@ -61,6 +60,7 @@ services:
     <<: *base
     container_name: chatwoot-rails
     depends_on:
+      - postgres
       - redis
     environment:
       - NODE_ENV=production
@@ -71,16 +71,20 @@ services:
     restart: unless-stopped
     networks:
       - edge
-      - traefik-public
     labels:
-      # Reachable only through the Newt tunnel, where Pangolin gates it. Traefik keeps
-      # serving the other hosts on this machine; it just no longer answers for this one.
-      - 'traefik.enable=false'
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=chatwoot-prod_edge'
+      - 'traefik.http.routers.chatwoot-prod.rule=Host(`${FRONTEND_HOST}`)'
+      - 'traefik.http.routers.chatwoot-prod.entrypoints=websecure'
+      - 'traefik.http.routers.chatwoot-prod.tls=true'
+      - 'traefik.http.routers.chatwoot-prod.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.chatwoot-prod.loadbalancer.server.port=3000'
 
   sidekiq:
     <<: *base
     container_name: chatwoot-sidekiq
     depends_on:
+      - postgres
       - redis
     environment:
       - NODE_ENV=production
@@ -91,12 +95,16 @@ services:
     networks:
       - edge
 
-  newt:
-    image: fosrl/newt:1.15.0
-    container_name: chatwoot-newt
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: chatwoot-postgres
     restart: unless-stopped
-    env_file:
-      - newt.env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-chatwoot_production}
+      POSTGRES_USER: ${POSTGRES_USERNAME:-chatwoot_prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - edge
 
@@ -113,9 +121,8 @@ services:
 
 networks:
   edge:
-  traefik-public:
-    external: true
 
 volumes:
   letsencrypt:
+  postgres_data:
   redis_data:

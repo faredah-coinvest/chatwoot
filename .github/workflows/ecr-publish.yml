@@ -68,25 +68,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Join Pangolin
-        if: github.ref_name == 'stg' || github.ref_name == 'develop'
-        run: |
-          curl -fsSL https://static.pangolin.net/get-cli.sh | sudo bash
-          if [ "${{ github.ref_name }}" = "develop" ]; then
-            ID='${{ secrets.PANGOLIN_PROD_CLIENT_ID }}'
-            SECRET='${{ secrets.PANGOLIN_PROD_CLIENT_SECRET }}'
-            TARGET='${{ secrets.PROD_SERVER_IP }}'
-          else
-            ID='${{ secrets.PANGOLIN_STG_CLIENT_ID }}'
-            SECRET='${{ secrets.PANGOLIN_STG_CLIENT_SECRET }}'
-            TARGET='${{ secrets.STG_SERVER_IP }}'
-          fi
-          sudo pangolin up --id "$ID" --secret "$SECRET" \
-            --endpoint https://portal.faredah.com --attach > /tmp/pangolin.log 2>&1 &
-          # the servers only accept SSH from the VPN, so wait for the tunnel to carry traffic
-          timeout 90 bash -c "until nc -z -w 3 $TARGET 22; do sleep 3; done" \
-            || { echo "tunnel never came up"; tail -40 /tmp/pangolin.log; exit 1; }
-
       - name: Deploy staging on EC2
         if: github.ref_name == 'stg'
         uses: appleboy/ssh-action@master
