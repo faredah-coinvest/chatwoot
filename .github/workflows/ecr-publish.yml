@@ -55,6 +55,8 @@ jobs:
           tags: |
             ${{ env.SWR_REGISTRY }}/${{ env.SWR_ORG }}/${{ env.SWR_REPOSITORY }}:${{ github.sha }}
             ${{ env.SWR_REGISTRY }}/${{ env.SWR_ORG }}/${{ env.SWR_REPOSITORY }}:latest
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
