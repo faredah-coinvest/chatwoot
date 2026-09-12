@@ -1,6 +1,8 @@
-# Production: Traefik (HTTPS + Let's Encrypt) + Chatwoot with local PostgreSQL.
+# Production: Traefik + Chatwoot with local PostgreSQL, behind a Cloudflare Tunnel.
 #
-# DNS: point ${FRONTEND_HOST} (A/AAAA) at this host. Open ports 80 and 443.
+# TLS terminates at Cloudflare. The tunnel connector reaches this host over the
+# private network, so nothing here needs a certificate and no port has to be open
+# to the internet. DNS for ${FRONTEND_HOST} is a tunnel route, not an A record.
 #
 # Variables are read from `.env` in this directory (Compose loads it for substitution
 # and passes the same file into containers via env_file).
@@ -8,7 +10,6 @@
 # .env should include at least:
 #   CHATWOOT_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>
 #   FRONTEND_HOST=your.public.hostname
-#   LETSENCRYPT_EMAIL=you@example.com
 #   POSTGRES_* for the local PostgreSQL container
 #   REDIS_PASSWORD=... and REDIS_URL=redis://:password@redis:6379
 #   SECRET_KEY_BASE=...
@@ -35,7 +36,6 @@ services:
       - /tmp
     ports:
       - '80:80'
-      - '443:443'
     env_file:
       - .env
     command:
@@ -43,14 +43,11 @@ services:
       - '--api.dashboard=false'
       - '--providers.docker=true'
       - '--providers.docker.exposedbydefault=false'
+      # TLS terminates at Cloudflare; the tunnel reaches this over the private
+      # network, so the origin serves plain http and holds no certificate.
       - '--entrypoints.web.address=:80'
-      - '--entrypoints.websecure.address=:443'
-      - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
-      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}'
-      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - letsencrypt:/letsencrypt
     networks:
       - edge
 
@@ -71,13 +68,9 @@ services:
       - edge
     labels:
       - 'traefik.enable=true'
-      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
-      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
       - 'traefik.docker.network=chatwoot-prod_edge'
       - 'traefik.http.routers.chatwoot-prod.rule=Host(`${FRONTEND_HOST}`)'
-      - 'traefik.http.routers.chatwoot-prod.entrypoints=websecure'
-      - 'traefik.http.routers.chatwoot-prod.tls=true'
-      - 'traefik.http.routers.chatwoot-prod.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.chatwoot-prod.entrypoints=web'
       - 'traefik.http.services.chatwoot-prod.loadbalancer.server.port=3000'
 
   sidekiq:
@@ -123,6 +116,5 @@ networks:
   edge:
 
 volumes:
-  letsencrypt:
   postgres_data:
   redis_data:
