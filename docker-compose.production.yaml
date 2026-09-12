@@ -45,8 +45,6 @@ services:
       - '--providers.docker.exposedbydefault=false'
       - '--entrypoints.web.address=:80'
       - '--entrypoints.websecure.address=:443'
-      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
-      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
       - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
       - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}'
       - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
@@ -73,6 +71,8 @@ services:
       - edge
     labels:
       - 'traefik.enable=true'
+      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
       - 'traefik.docker.network=chatwoot-prod_edge'
       - 'traefik.http.routers.chatwoot-prod.rule=Host(`${FRONTEND_HOST}`)'
       - 'traefik.http.routers.chatwoot-prod.entrypoints=websecure'
