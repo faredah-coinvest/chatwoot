@@ -1,10 +1,10 @@
-# Build Chatwoot image and push to AWS ECR (linux/amd64).
+# Build Chatwoot images and publish production to Huawei SWR.
 #
 # Branch mapping:
-# - develop -> ECR_REPOSITORY (example: prod-chatwoot)
-# - stg     -> stg-chatwoot (derived from ECR_REPOSITORY by replacing prod- with stg-)
+# - develop -> Huawei SWR (production)
+# - stg     -> AWS ECR (staging)
 
-name: Publish to AWS ECR
+name: Publish Chatwoot images
 
 on:
   push:
@@ -14,36 +14,127 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ecr-publish-${{ github.ref }}
+  group: chatwoot-publish-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
-  build-and-push:
+  publish-production-swr:
+    if: github.ref_name == 'develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SWR_REGISTRY: swr.af-north-1.myhuaweicloud.com
+      SWR_ORG: Farida
+      SWR_REPOSITORY: prod-chatwoot
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Huawei SWR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.SWR_REGISTRY }}
+          username: ${{ secrets.HUAWEI_SWR_USERNAME }}
+          password: ${{ secrets.HUAWEI_SWR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            RAILS_ENV=production
+            BUNDLE_WITHOUT=development:test
+          tags: |
+            ${{ env.SWR_REGISTRY }}/${{ env.SWR_ORG }}/${{ env.SWR_REPOSITORY }}:${{ github.sha }}
+            ${{ env.SWR_REGISTRY }}/${{ env.SWR_ORG }}/${{ env.SWR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy production on Huawei ECS
+        uses: appleboy/ssh-action@master
+        env:
+          SWR_REGISTRY: ${{ env.SWR_REGISTRY }}
+          SWR_ORG: ${{ env.SWR_ORG }}
+          SWR_REPOSITORY: ${{ env.SWR_REPOSITORY }}
+          SWR_USERNAME: ${{ secrets.HUAWEI_SWR_USERNAME }}
+          SWR_PASSWORD: ${{ secrets.HUAWEI_SWR_PASSWORD }}
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          envs: SWR_REGISTRY,SWR_ORG,SWR_REPOSITORY,SWR_USERNAME,SWR_PASSWORD
+          script: |
+            set -euo pipefail
+
+            cd ~/chatwoot
+
+            echo "Checking available disk space..."
+            FREE_SPACE=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//')
+            echo "Free space available: ${FREE_SPACE} GB"
+
+            if [ "$FREE_SPACE" -lt 5 ]; then
+              echo "Low disk space (<5GB). Running Docker cleanup..."
+              docker container prune -f
+              docker image prune -af
+              docker builder prune -af
+            fi
+
+            echo "Pulling latest code..."
+            git fetch origin develop
+            git checkout develop
+            git pull --ff-only origin develop
+
+            printf '%s' "$SWR_PASSWORD" | docker login \
+              --username "$SWR_USERNAME" \
+              --password-stdin "$SWR_REGISTRY" >/dev/null
+
+            CHATWOOT_IMAGE="$SWR_REGISTRY/$SWR_ORG/$SWR_REPOSITORY:latest"
+            if grep -q '^CHATWOOT_IMAGE=' .env; then
+              sed -i "s#^CHATWOOT_IMAGE=.*#CHATWOOT_IMAGE=$CHATWOOT_IMAGE#" .env
+            else
+              printf '\nCHATWOOT_IMAGE=%s\n' "$CHATWOOT_IMAGE" >> .env
+            fi
+            chmod 600 .env
+
+            echo "Starting Chatwoot infrastructure..."
+            docker compose --env-file .env -f docker-compose.production.yaml up -d postgres redis traefik
+
+            echo "Deploying Chatwoot..."
+            chmod +x script/deploy_chatwoot_compose.sh
+            script/deploy_chatwoot_compose.sh
+
+            echo "Deployment complete."
+
+  publish-staging-ecr:
+    if: github.ref_name == 'stg'
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ github.ref_name == 'develop' && 'us-east-1' || secrets.AWS_REGION }}
-      ECR_REGISTRY: ${{ github.ref_name == 'develop' && '612947471739.dkr.ecr.us-east-1.amazonaws.com' || secrets.ECR_REGISTRY }}
-      ECR_REPOSITORY: ${{ github.ref_name == 'develop' && 'prod-chatwoot' || secrets.ECR_REPOSITORY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Resolve target ECR repository
-        run: |
-          if [ "${GITHUB_REF_NAME}" = "stg" ]; then
-            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY/prod-/stg-}" >> "$GITHUB_ENV"
-          else
-            echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY}" >> "$GITHUB_ENV"
-          fi
+        run: echo "TARGET_ECR_REPOSITORY=${ECR_REPOSITORY/prod-/stg-}" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ github.ref_name == 'develop' && 'arn:aws:iam::612947471739:role/github-actions-chatwoot-prod' || secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -110,50 +201,5 @@ jobs:
             echo "Deploying Chatwoot..."
             chmod +x script/deploy_chatwoot_compose.sh
             script/deploy_chatwoot_compose.sh --stg
-
-            echo "Deployment complete."
-
-      - name: Deploy production on EC2
-        if: github.ref_name == 'develop'
-        uses: appleboy/ssh-action@master
-        env:
-          AWS_REGION: ${{ env.AWS_REGION }}
-          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-        with:
-          host: ${{ github.ref_name == 'develop' && '98.90.169.140' || secrets.PROD_SERVER_IP }}
-          username: ${{ github.ref_name == 'develop' && 'ubuntu' || secrets.SSH_USERNAME }}
-          key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-          envs: AWS_REGION,ECR_REGISTRY
-          script: |
-            set -euo pipefail
-
-            cd ~/chatwoot
-
-            echo "Checking available disk space..."
-            FREE_SPACE=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//')
-            echo "Free space available: ${FREE_SPACE} GB"
-
-            if [ "$FREE_SPACE" -lt 5 ]; then
-              echo "Low disk space (<5GB). Running Docker cleanup..."
-              docker container prune -f
-              docker image prune -af
-              docker builder prune -af
-            else
-              echo "Enough disk space. Skipping Docker cleanup."
-            fi
-
-            echo "Pulling latest code..."
-            git fetch origin develop
-            git checkout develop
-            git pull --ff-only origin develop
-
-            if command -v aws >/dev/null 2>&1; then
-              echo "Refreshing ECR login..."
-              aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-            fi
-
-            echo "Deploying Chatwoot..."
-            chmod +x script/deploy_chatwoot_compose.sh
-            script/deploy_chatwoot_compose.sh
 
             echo "Deployment complete."
