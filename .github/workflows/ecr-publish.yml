@@ -25,7 +25,7 @@ jobs:
       contents: read
     env:
       SWR_REGISTRY: swr.af-north-1.myhuaweicloud.com
-      SWR_ORG: Farida
+      SWR_ORG: farida
       SWR_REPOSITORY: prod-chatwoot
 
     steps:
