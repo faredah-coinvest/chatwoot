@@ -27,6 +27,10 @@ jobs:
       SWR_REGISTRY: swr.af-north-1.myhuaweicloud.com
       SWR_ORG: farida
       SWR_REPOSITORY: prod-chatwoot
+      # cloudflared runs as a ProxyCommand inside the deploy step, not where
+      # it is installed, so the token has to be on the job.
+      TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_SERVICE_TOKEN_ID }}
+      TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_SERVICE_TOKEN_SECRET }}
 
     steps:
       - name: Checkout
